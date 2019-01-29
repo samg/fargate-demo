@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: 2010-09-09
 Transform: AWS::Serverless-2016-10-31
 Resources:
-  DockerTask:
+  MyFargateTask:
     Type: AWS::ECS::TaskDefinition
     Properties:
       ContainerDefinitions:
@@ -9,27 +9,24 @@ Resources:
           LogConfiguration:
             LogDriver: awslogs
             Options:
-              awslogs-group: !Ref DockerTaskLogGroup
+              awslogs-group: !Ref MyFargateTaskLogGroup
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: hello-world
           Name: 0
+          Environment: []
       Cpu: 1024
-      ExecutionRoleArn: !GetAtt DockerTaskExecutionRole.Arn
+      ExecutionRoleArn: !GetAtt MyFargateTaskExecutionRole.Arn
       Memory: 2048
       NetworkMode: awsvpc
       RequiresCompatibilities:
         - FARGATE
-      TaskRoleArn: !GetAtt DockerTaskTaskRole.Arn
+      TaskRoleArn: !GetAtt MyFargateTaskTaskRole.Arn
       Volumes: []
-    DependsOn: DockerTaskLogGroup
-  DockerTaskLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub /stackery/task/${AWS::StackName}-DockerTask/hello-world
-  DockerTaskExecutionRole:
+    DependsOn: MyFargateTaskLogGroup
+  MyFargateTaskExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub ${AWS::StackName}-DockerTaskExecutionRole
+      RoleName: !Sub ${AWS::StackName}-MyFargateTaskExecutionRole
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
@@ -54,10 +51,10 @@ Resources:
                   - ecr:GetDownloadUrlForLayer
                   - ecr:BatchGetImage
                 Resource: '*'
-  DockerTaskTaskRole:
+  MyFargateTaskTaskRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub ${AWS::StackName}-DockerTaskTaskRole
+      RoleName: !Sub ${AWS::StackName}-MyFargateTaskTaskRole
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
@@ -65,14 +62,18 @@ Resources:
           Principal:
             Service: ecs-tasks.amazonaws.com
           Action: sts:AssumeRole
-  triggerDockerTask:
+  MyFargateTaskLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /stackery/task/${AWS::StackName}-MyFargateTask/hello-world
+  myTrigger:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub ${AWS::StackName}-triggerDockerTask
+      FunctionName: !Sub ${AWS::StackName}-myTrigger
       Description: !Sub
-        - Stack ${StackTagName} Environment ${EnvironmentTagName} triggerDockerTask ${ResourceName}
-        - ResourceName: triggerDockerTask
-      CodeUri: src/triggerDockerTask
+        - Stack ${StackTagName} Environment ${EnvironmentTagName} myTrigger ${ResourceName}
+        - ResourceName: myTrigger
+      CodeUri: src/myTrigger
       Handler: index.handler
       Runtime: nodejs8.10
       MemorySize: 3008
@@ -87,18 +88,18 @@ Resources:
                 - ecs:DescribeTasks
                 - ecs:StopTask
               Resource:
-                - !Ref DockerTask
+                - !Ref MyFargateTask
                 - !Sub arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task/*
         - Statement:
             - Effect: Allow
               Action:
                 - iam:PassRole
               Resource:
-                - !GetAtt DockerTaskExecutionRole.Arn
-                - !GetAtt DockerTaskTaskRole.Arn
+                - !GetAtt MyFargateTaskExecutionRole.Arn
+                - !GetAtt MyFargateTaskTaskRole.Arn
       Environment:
         Variables:
-          DOCKER_TASK_ARN: !Ref DockerTask
+          DOCKER_TASK_ARN: !Ref MyFargateTask
           DOCKER_TASK_SUBNETS: !Join
             - ','
             - !Ref DefaultVPCSubnets
@@ -125,7 +126,7 @@ Resources:
               x-amazon-apigateway-integration:
                 httpMethod: POST
                 type: aws_proxy
-                uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${triggerDockerTask.Arn}/invocations
+                uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${myTrigger.Arn}/invocations
               responses: {}
       EndpointConfiguration: REGIONAL
 Parameters:
