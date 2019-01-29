@@ -12,8 +12,7 @@ exports.handler = async message => {
     networkConfiguration: {
       awsvpcConfiguration: {
         subnets: process.env.DOCKER_TASK_SUBNETS.split(','),
-        assignPublicIp: 'ENABLED',
-        securityGroups: [process.env.DOCKER_SG],
+        assignPublicIp: 'ENABLED'
       }
     },
   };
