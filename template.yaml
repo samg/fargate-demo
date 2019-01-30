@@ -225,6 +225,8 @@ Resources:
       Tracing: Active
       Policies:
         - AWSXrayWriteOnlyAccess
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
       Events:
         ApiGETquery:
           Type: Api
@@ -232,6 +234,10 @@ Resources:
             Path: /query
             Method: GET
             RestApiId: !Ref Api
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref Table
+          TABLE_ARN: !GetAtt Table.Arn
   Function3:
     Type: AWS::Serverless::Function
     Properties:
@@ -247,6 +253,8 @@ Resources:
       Tracing: Active
       Policies:
         - AWSXrayWriteOnlyAccess
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt Topic.TopicName
       Events:
         Table:
           Type: DynamoDB
@@ -254,6 +262,14 @@ Resources:
             Stream: !GetAtt Table.StreamArn
             StartingPosition: TRIM_HORIZON
             BatchSize: 1
+      Environment:
+        Variables:
+          TOPIC_NAME: !GetAtt Topic.TopicName
+          TOPIC_ARN: !Ref Topic
+  Topic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub ${AWS::StackName}-Topic
 Parameters:
   StackTagName:
     Type: String
