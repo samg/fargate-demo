@@ -227,6 +227,12 @@ Resources:
         - AWSXrayWriteOnlyAccess
         - DynamoDBCrudPolicy:
             TableName: !Ref Table
+        - KinesisCrudPolicy:
+            StreamName: !Ref Stream
+        - KinesisStreamReadPolicy:
+            StreamName: !Ref Stream
+        - LambdaInvokePolicy:
+            FunctionName: !Ref Function
       Events:
         ApiGETquery:
           Type: Api
@@ -238,6 +244,10 @@ Resources:
         Variables:
           TABLE_NAME: !Ref Table
           TABLE_ARN: !GetAtt Table.Arn
+          STREAM_NAME: !Ref Stream
+          STREAM_ARN: !GetAtt Stream.Arn
+          FUNCTION_NAME: !Ref Function
+          FUNCTION_ARN: !GetAtt Function.Arn
   Function3:
     Type: AWS::Serverless::Function
     Properties:
