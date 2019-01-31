@@ -265,6 +265,8 @@ Resources:
         - AWSXrayWriteOnlyAccess
         - SNSPublishMessagePolicy:
             TopicName: !GetAtt Topic.TopicName
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
       Events:
         Table:
           Type: DynamoDB
@@ -272,10 +274,16 @@ Resources:
             Stream: !GetAtt Table.StreamArn
             StartingPosition: TRIM_HORIZON
             BatchSize: 1
+        Topic:
+          Type: SNS
+          Properties:
+            Topic: !Ref Topic
       Environment:
         Variables:
           TOPIC_NAME: !GetAtt Topic.TopicName
           TOPIC_ARN: !Ref Topic
+          TABLE_NAME: !Ref Table
+          TABLE_ARN: !GetAtt Table.Arn
   Topic:
     Type: AWS::SNS::Topic
     Properties:
