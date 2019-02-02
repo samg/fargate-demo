@@ -1,99 +1,125 @@
 AWSTemplateFormatVersion: 2010-09-09
 Transform: AWS::Serverless-2016-10-31
 Resources:
-  MyFargateTask:
-    Type: AWS::ECS::TaskDefinition
+  Api:
+    Type: AWS::Serverless::Api
     Properties:
-      ContainerDefinitions:
-        - Image: hello-world
-          LogConfiguration:
-            LogDriver: awslogs
-            Options:
-              awslogs-group: !Ref MyFargateTaskLogGroup
-              awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: hello-world
-          Name: 0
-          Environment:
-            - Name: TABLE_NAME
-              Value: !Ref Table
-            - Name: TABLE_ARN
-              Value: !GetAtt Table.Arn
-      Cpu: 1024
-      ExecutionRoleArn: !GetAtt MyFargateTaskExecutionRole.Arn
-      Memory: 2048
-      NetworkMode: awsvpc
-      RequiresCompatibilities:
-        - FARGATE
-      TaskRoleArn: !GetAtt MyFargateTaskTaskRole.Arn
-      Volumes: []
-    DependsOn: MyFargateTaskLogGroup
-  MyFargateTaskExecutionRole:
-    Type: AWS::IAM::Role
+      Name: !Sub
+        - ${ResourceName} From Stack ${StackTagName} Environment ${EnvironmentTagName}
+        - ResourceName: Api
+      StageName: !Ref EnvironmentAPIGatewayStageName
+      DefinitionBody:
+        swagger: '2.0'
+        info: {}
+        paths:
+          /:
+            post:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Ingest.Arn}/invocations
+              responses: {}
+          /query:
+            get:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${QueryAPI.Arn}/invocations
+              responses: {}
+      EndpointConfiguration: REGIONAL
+  Stream:
+    Type: AWS::Kinesis::Stream
     Properties:
-      RoleName: !Sub ${AWS::StackName}-MyFargateTaskExecutionRole
-      AssumeRolePolicyDocument:
-        Version: 2012-10-17
-        Statement:
-          Effect: Allow
-          Principal:
-            Service: ecs-tasks.amazonaws.com
-          Action: sts:AssumeRole
-      Policies:
-        - PolicyName: DownloadDockerImagesFromECR
-          PolicyDocument:
-            Version: 2012-10-17
-            Statement:
-              - Effect: Allow
-                Action:
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource: !Sub arn:aws:logs:*:*:log-group:/stackery/task/${AWS::StackName}-*
-              - Effect: Allow
-                Action:
-                  - ecr:GetAuthorizationToken
-                  - ecr:BatchCheckLayerAvailability
-                  - ecr:GetDownloadUrlForLayer
-                  - ecr:BatchGetImage
-                Resource: '*'
-  MyFargateTaskTaskRole:
-    Type: AWS::IAM::Role
+      Name: !Sub ${AWS::StackName}-Stream
+      ShardCount: 1
+      StreamEncryption:
+        EncryptionType: KMS
+        KeyId: alias/aws/kinesis
+  Table:
+    Type: AWS::DynamoDB::Table
     Properties:
-      RoleName: !Sub ${AWS::StackName}-MyFargateTaskTaskRole
-      AssumeRolePolicyDocument:
-        Version: 2012-10-17
-        Statement:
-          Effect: Allow
-          Principal:
-            Service: ecs-tasks.amazonaws.com
-          Action: sts:AssumeRole
-      Policies:
-        - PolicyName: AccessTable
-          PolicyDocument:
-            Version: 2012-10-17
-            Statement:
-              - Effect: Allow
-                Action:
-                  - dynamodb:GetItem
-                  - dynamodb:DeleteItem
-                  - dynamodb:PutItem
-                  - dynamodb:Scan
-                  - dynamodb:Query
-                  - dynamodb:UpdateItem
-                  - dynamodb:BatchWriteItem
-                  - dynamodb:BatchGetItem
-                Resource: !GetAtt Table.Arn
-  MyFargateTaskLogGroup:
-    Type: AWS::Logs::LogGroup
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      TableName: !Sub ${AWS::StackName}-Table
+  Topic:
+    Type: AWS::SNS::Topic
     Properties:
-      LogGroupName: !Sub /stackery/task/${AWS::StackName}-MyFargateTask/hello-world
-  myTrigger:
+      TopicName: !Sub ${AWS::StackName}-Topic
+  NotifyTableEvents:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub ${AWS::StackName}-myTrigger
+      FunctionName: !Sub ${AWS::StackName}-NotifyTableEvents
       Description: !Sub
-        - Stack ${StackTagName} Environment ${EnvironmentTagName} myTrigger ${ResourceName}
-        - ResourceName: myTrigger
-      CodeUri: src/myTrigger
+        - Stack ${StackTagName} Environment ${EnvironmentTagName} Process ${ResourceName}
+        - ResourceName: NotifyTableEvents
+      CodeUri: src/NotifyTableEvents
+      Handler: index.handler
+      Runtime: nodejs8.10
+      MemorySize: 3008
+      Timeout: 30
+      Tracing: Active
+      Policies:
+        - AWSXrayWriteOnlyAccess
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt Topic.TopicName
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+      Events:
+        Table:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt Table.StreamArn
+            StartingPosition: TRIM_HORIZON
+            BatchSize: 1
+      Environment:
+        Variables:
+          TOPIC_NAME: !GetAtt Topic.TopicName
+          TOPIC_ARN: !Ref Topic
+          TABLE_NAME: !Ref Table
+          TABLE_ARN: !GetAtt Table.Arn
+  QueryAPI:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-QueryAPI
+      Description: !Sub
+        - Stack ${StackTagName} Environment ${EnvironmentTagName} Process ${ResourceName}
+        - ResourceName: QueryAPI
+      CodeUri: src/QueryAPI
+      Handler: index.handler
+      Runtime: nodejs8.10
+      MemorySize: 3008
+      Timeout: 30
+      Tracing: Active
+      Policies:
+        - AWSXrayWriteOnlyAccess
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+      Events:
+        ApiGETquery:
+          Type: Api
+          Properties:
+            Path: /query
+            Method: GET
+            RestApiId: !Ref Api
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref Table
+          TABLE_ARN: !GetAtt Table.Arn
+  Ingest:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-Ingest
+      Description: !Sub
+        - Stack ${StackTagName} Environment ${EnvironmentTagName} Ingest ${ResourceName}
+        - ResourceName: Ingest
+      CodeUri: src/Ingest
       Handler: index.handler
       Runtime: nodejs8.10
       MemorySize: 3008
@@ -119,48 +145,14 @@ Resources:
             Path: /
             Method: POST
             RestApiId: !Ref Api
-  Api:
-    Type: AWS::Serverless::Api
-    Properties:
-      Name: !Sub
-        - ${ResourceName} From Stack ${StackTagName} Environment ${EnvironmentTagName}
-        - ResourceName: Api
-      StageName: !Ref EnvironmentAPIGatewayStageName
-      DefinitionBody:
-        swagger: '2.0'
-        info: {}
-        paths:
-          /:
-            post:
-              x-amazon-apigateway-integration:
-                httpMethod: POST
-                type: aws_proxy
-                uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${myTrigger.Arn}/invocations
-              responses: {}
-          /query:
-            get:
-              x-amazon-apigateway-integration:
-                httpMethod: POST
-                type: aws_proxy
-                uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Function2.Arn}/invocations
-              responses: {}
-      EndpointConfiguration: REGIONAL
-  Stream:
-    Type: AWS::Kinesis::Stream
-    Properties:
-      Name: !Sub ${AWS::StackName}-Stream
-      ShardCount: 1
-      StreamEncryption:
-        EncryptionType: KMS
-        KeyId: alias/aws/kinesis
-  Function:
+  Process:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub ${AWS::StackName}-Function
+      FunctionName: !Sub ${AWS::StackName}-Process
       Description: !Sub
-        - Stack ${StackTagName} Environment ${EnvironmentTagName} Function ${ResourceName}
-        - ResourceName: Function
-      CodeUri: src/Function
+        - Stack ${StackTagName} Environment ${EnvironmentTagName} Process ${ResourceName}
+        - ResourceName: Process
+      CodeUri: src/Process
       Handler: index.handler
       Runtime: nodejs8.10
       MemorySize: 3008
@@ -175,15 +167,15 @@ Resources:
                 - ecs:DescribeTasks
                 - ecs:StopTask
               Resource:
-                - !Ref MyFargateTask
+                - !Ref Persist
                 - !Sub arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task/*
         - Statement:
             - Effect: Allow
               Action:
                 - iam:PassRole
               Resource:
-                - !GetAtt MyFargateTaskExecutionRole.Arn
-                - !GetAtt MyFargateTaskTaskRole.Arn
+                - !GetAtt PersistExecutionRole.Arn
+                - !GetAtt PersistTaskRole.Arn
       Events:
         Stream:
           Type: Kinesis
@@ -193,101 +185,95 @@ Resources:
             BatchSize: 1
       Environment:
         Variables:
-          DOCKER_TASK_ARN: !Ref MyFargateTask
+          DOCKER_TASK_ARN: !Ref Persist
           DOCKER_TASK_SUBNETS: !Join
             - ','
             - !Ref DefaultVPCSubnets
-  Table:
-    Type: AWS::DynamoDB::Table
+  Persist:
+    Type: AWS::ECS::TaskDefinition
     Properties:
-      AttributeDefinitions:
-        - AttributeName: id
-          AttributeType: S
-      BillingMode: PAY_PER_REQUEST
-      KeySchema:
-        - AttributeName: id
-          KeyType: HASH
-      StreamSpecification:
-        StreamViewType: NEW_AND_OLD_IMAGES
-      TableName: !Sub ${AWS::StackName}-Table
-  Function2:
-    Type: AWS::Serverless::Function
+      ContainerDefinitions:
+        - Image: hello-world
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref PersistLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: hello-world
+          Name: 0
+          Environment:
+            - Name: TABLE_NAME
+              Value: !Ref Table
+            - Name: TABLE_ARN
+              Value: !GetAtt Table.Arn
+      Cpu: 1024
+      ExecutionRoleArn: !GetAtt PersistExecutionRole.Arn
+      Memory: 2048
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      TaskRoleArn: !GetAtt PersistTaskRole.Arn
+      Volumes: []
+    DependsOn: PersistLogGroup
+  PersistExecutionRole:
+    Type: AWS::IAM::Role
     Properties:
-      FunctionName: !Sub ${AWS::StackName}-Function2
-      Description: !Sub
-        - Stack ${StackTagName} Environment ${EnvironmentTagName} Function ${ResourceName}
-        - ResourceName: Function2
-      CodeUri: src/Function2
-      Handler: index.handler
-      Runtime: nodejs8.10
-      MemorySize: 3008
-      Timeout: 30
-      Tracing: Active
+      RoleName: !Sub ${AWS::StackName}-PersistExecutionRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          Effect: Allow
+          Principal:
+            Service: ecs-tasks.amazonaws.com
+          Action: sts:AssumeRole
       Policies:
-        - AWSXrayWriteOnlyAccess
-        - DynamoDBCrudPolicy:
-            TableName: !Ref Table
-        - KinesisCrudPolicy:
-            StreamName: !Ref Stream
-        - KinesisStreamReadPolicy:
-            StreamName: !Ref Stream
-        - LambdaInvokePolicy:
-            FunctionName: !Ref Function
-      Events:
-        ApiGETquery:
-          Type: Api
-          Properties:
-            Path: /query
-            Method: GET
-            RestApiId: !Ref Api
-      Environment:
-        Variables:
-          TABLE_NAME: !Ref Table
-          TABLE_ARN: !GetAtt Table.Arn
-          STREAM_NAME: !Ref Stream
-          STREAM_ARN: !GetAtt Stream.Arn
-          FUNCTION_NAME: !Ref Function
-          FUNCTION_ARN: !GetAtt Function.Arn
-  Function3:
-    Type: AWS::Serverless::Function
+        - PolicyName: DownloadDockerImagesFromECR
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:aws:logs:*:*:log-group:/stackery/task/${AWS::StackName}-*
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: '*'
+  PersistTaskRole:
+    Type: AWS::IAM::Role
     Properties:
-      FunctionName: !Sub ${AWS::StackName}-Function3
-      Description: !Sub
-        - Stack ${StackTagName} Environment ${EnvironmentTagName} Function ${ResourceName}
-        - ResourceName: Function3
-      CodeUri: src/Function3
-      Handler: index.handler
-      Runtime: nodejs8.10
-      MemorySize: 3008
-      Timeout: 30
-      Tracing: Active
+      RoleName: !Sub ${AWS::StackName}-PersistTaskRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          Effect: Allow
+          Principal:
+            Service: ecs-tasks.amazonaws.com
+          Action: sts:AssumeRole
       Policies:
-        - AWSXrayWriteOnlyAccess
-        - SNSPublishMessagePolicy:
-            TopicName: !GetAtt Topic.TopicName
-        - DynamoDBCrudPolicy:
-            TableName: !Ref Table
-      Events:
-        Table:
-          Type: DynamoDB
-          Properties:
-            Stream: !GetAtt Table.StreamArn
-            StartingPosition: TRIM_HORIZON
-            BatchSize: 1
-        Topic:
-          Type: SNS
-          Properties:
-            Topic: !Ref Topic
-      Environment:
-        Variables:
-          TOPIC_NAME: !GetAtt Topic.TopicName
-          TOPIC_ARN: !Ref Topic
-          TABLE_NAME: !Ref Table
-          TABLE_ARN: !GetAtt Table.Arn
-  Topic:
-    Type: AWS::SNS::Topic
+        - PolicyName: AccessTable
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:PutItem
+                  - dynamodb:Scan
+                  - dynamodb:Query
+                  - dynamodb:UpdateItem
+                  - dynamodb:BatchWriteItem
+                  - dynamodb:BatchGetItem
+                Resource: !GetAtt Table.Arn
+  PersistLogGroup:
+    Type: AWS::Logs::LogGroup
     Properties:
-      TopicName: !Sub ${AWS::StackName}-Topic
+      LogGroupName: !Sub /stackery/task/${AWS::StackName}-Persist/hello-world
 Parameters:
   StackTagName:
     Type: String
