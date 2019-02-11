@@ -1,6 +1,5 @@
 AWSTemplateFormatVersion: 2010-09-09
 Description: (SO0036) - The AWS CloudFormation template for deployment of the AWS Connected Vehicle Solution. Version 2.0.
-Transform: AWS::Serverless-2016-10-31
 Mappings:
   SourceCode:
     General:
