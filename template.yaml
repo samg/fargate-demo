@@ -183,6 +183,10 @@ Resources:
             Stream: !GetAtt Stream.Arn
             StartingPosition: TRIM_HORIZON
             BatchSize: 1
+        Topic:
+          Type: SNS
+          Properties:
+            Topic: !Ref Topic
       Environment:
         Variables:
           DOCKER_TASK_ARN: !Ref Persist
