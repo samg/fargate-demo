@@ -12,13 +12,6 @@ Resources:
         swagger: '2.0'
         info: {}
         paths:
-          /:
-            post:
-              x-amazon-apigateway-integration:
-                httpMethod: POST
-                type: aws_proxy
-                uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Ingest.Arn}/invocations
-              responses: {}
           /query:
             get:
               x-amazon-apigateway-integration:
@@ -27,31 +20,6 @@ Resources:
                 uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${QueryAPI.Arn}/invocations
               responses: {}
       EndpointConfiguration: REGIONAL
-  Stream:
-    Type: AWS::Kinesis::Stream
-    Properties:
-      Name: !Sub ${AWS::StackName}-Stream
-      ShardCount: 1
-      StreamEncryption:
-        EncryptionType: KMS
-        KeyId: alias/aws/kinesis
-  Table:
-    Type: AWS::DynamoDB::Table
-    Properties:
-      AttributeDefinitions:
-        - AttributeName: id
-          AttributeType: S
-      BillingMode: PAY_PER_REQUEST
-      KeySchema:
-        - AttributeName: id
-          KeyType: HASH
-      StreamSpecification:
-        StreamViewType: NEW_AND_OLD_IMAGES
-      TableName: !Sub ${AWS::StackName}-Table
-  Topic:
-    Type: AWS::SNS::Topic
-    Properties:
-      TopicName: !Sub ${AWS::StackName}-Topic
   QueryAPI:
     Type: AWS::Serverless::Function
     Properties:
@@ -67,8 +35,6 @@ Resources:
       Tracing: Active
       Policies:
         - AWSXrayWriteOnlyAccess
-        - DynamoDBCrudPolicy:
-            TableName: !Ref Table
       Events:
         ApiGETquery:
           Type: Api
@@ -76,176 +42,6 @@ Resources:
             Path: /query
             Method: GET
             RestApiId: !Ref Api
-      Environment:
-        Variables:
-          TABLE_NAME: !Ref Table
-          TABLE_ARN: !GetAtt Table.Arn
-  Ingest:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: !Sub ${AWS::StackName}-Ingest
-      Description: !Sub
-        - Stack ${StackTagName} Environment ${EnvironmentTagName} Ingest ${ResourceName}
-        - ResourceName: Ingest
-      CodeUri: src/Ingest
-      Handler: index.handler
-      Runtime: nodejs8.10
-      MemorySize: 3008
-      Timeout: 30
-      Tracing: Active
-      Policies:
-        - AWSXrayWriteOnlyAccess
-        - KinesisCrudPolicy:
-            StreamName: !Ref Stream
-        - KinesisStreamReadPolicy:
-            StreamName: !Ref Stream
-      Environment:
-        Variables:
-          DOCKER_TASK_SUBNETS: !Join
-            - ','
-            - !Ref DefaultVPCSubnets
-          STREAM_NAME: !Ref Stream
-          STREAM_ARN: !GetAtt Stream.Arn
-      Events:
-        ApiPOST:
-          Type: Api
-          Properties:
-            Path: /
-            Method: POST
-            RestApiId: !Ref Api
-  Process:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: !Sub ${AWS::StackName}-Process
-      Description: !Sub
-        - Stack ${StackTagName} Environment ${EnvironmentTagName} Process ${ResourceName}
-        - ResourceName: Process
-      CodeUri: src/Process
-      Handler: index.handler
-      Runtime: nodejs8.10
-      MemorySize: 3008
-      Timeout: 30
-      Tracing: Active
-      Policies:
-        - AWSXrayWriteOnlyAccess
-        - Statement:
-            - Effect: Allow
-              Action:
-                - ecs:RunTask
-                - ecs:DescribeTasks
-                - ecs:StopTask
-              Resource:
-                - !Ref Persist
-                - !Sub arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task/*
-        - Statement:
-            - Effect: Allow
-              Action:
-                - iam:PassRole
-              Resource:
-                - !GetAtt PersistExecutionRole.Arn
-                - !GetAtt PersistTaskRole.Arn
-      Events:
-        Stream:
-          Type: Kinesis
-          Properties:
-            Stream: !GetAtt Stream.Arn
-            StartingPosition: TRIM_HORIZON
-            BatchSize: 1
-        Topic:
-          Type: SNS
-          Properties:
-            Topic: !Ref Topic
-      Environment:
-        Variables:
-          DOCKER_TASK_ARN: !Ref Persist
-          DOCKER_TASK_SUBNETS: !Join
-            - ','
-            - !Ref DefaultVPCSubnets
-  Persist:
-    Type: AWS::ECS::TaskDefinition
-    Properties:
-      ContainerDefinitions:
-        - Image: hello-world
-          LogConfiguration:
-            LogDriver: awslogs
-            Options:
-              awslogs-group: !Ref PersistLogGroup
-              awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: hello-world
-          Name: 0
-          Environment:
-            - Name: TABLE_NAME
-              Value: !Ref Table
-            - Name: TABLE_ARN
-              Value: !GetAtt Table.Arn
-      Cpu: 1024
-      ExecutionRoleArn: !GetAtt PersistExecutionRole.Arn
-      Memory: 2048
-      NetworkMode: awsvpc
-      RequiresCompatibilities:
-        - FARGATE
-      TaskRoleArn: !GetAtt PersistTaskRole.Arn
-      Volumes: []
-    DependsOn: PersistLogGroup
-  PersistExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub ${AWS::StackName}-PersistExecutionRole
-      AssumeRolePolicyDocument:
-        Version: 2012-10-17
-        Statement:
-          Effect: Allow
-          Principal:
-            Service: ecs-tasks.amazonaws.com
-          Action: sts:AssumeRole
-      Policies:
-        - PolicyName: DownloadDockerImagesFromECR
-          PolicyDocument:
-            Version: 2012-10-17
-            Statement:
-              - Effect: Allow
-                Action:
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource: !Sub arn:aws:logs:*:*:log-group:/stackery/task/${AWS::StackName}-*
-              - Effect: Allow
-                Action:
-                  - ecr:GetAuthorizationToken
-                  - ecr:BatchCheckLayerAvailability
-                  - ecr:GetDownloadUrlForLayer
-                  - ecr:BatchGetImage
-                Resource: '*'
-  PersistTaskRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub ${AWS::StackName}-PersistTaskRole
-      AssumeRolePolicyDocument:
-        Version: 2012-10-17
-        Statement:
-          Effect: Allow
-          Principal:
-            Service: ecs-tasks.amazonaws.com
-          Action: sts:AssumeRole
-      Policies:
-        - PolicyName: AccessTable
-          PolicyDocument:
-            Version: 2012-10-17
-            Statement:
-              - Effect: Allow
-                Action:
-                  - dynamodb:GetItem
-                  - dynamodb:DeleteItem
-                  - dynamodb:PutItem
-                  - dynamodb:Scan
-                  - dynamodb:Query
-                  - dynamodb:UpdateItem
-                  - dynamodb:BatchWriteItem
-                  - dynamodb:BatchGetItem
-                Resource: !GetAtt Table.Arn
-  PersistLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub /stackery/task/${AWS::StackName}-Persist/hello-world
 Parameters:
   StackTagName:
     Type: String
@@ -253,9 +49,6 @@ Parameters:
   EnvironmentTagName:
     Type: String
     Description: Environment Name (injected by Stackery at deployment time)
-  DefaultVPCSubnets:
-    Type: List<AWS::EC2::Subnet::Id>
-    Description: AWS account-specific default VPC subnets (injected by Stackery at deployment time)
   EnvironmentAPIGatewayStageName:
     Type: String
     Description: Environment name used for API Gateway Stage names (injected by Stackery at deployment time)
