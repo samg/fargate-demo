@@ -52,38 +52,6 @@ Resources:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Sub ${AWS::StackName}-Topic
-  NotifyTableEvents:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: !Sub ${AWS::StackName}-NotifyTableEvents
-      Description: !Sub
-        - Stack ${StackTagName} Environment ${EnvironmentTagName} Process ${ResourceName}
-        - ResourceName: NotifyTableEvents
-      CodeUri: src/NotifyTableEvents
-      Handler: index.handler
-      Runtime: nodejs8.10
-      MemorySize: 3008
-      Timeout: 30
-      Tracing: Active
-      Policies:
-        - AWSXrayWriteOnlyAccess
-        - SNSPublishMessagePolicy:
-            TopicName: !GetAtt Topic.TopicName
-        - DynamoDBCrudPolicy:
-            TableName: !Ref Table
-      Events:
-        Table:
-          Type: DynamoDB
-          Properties:
-            Stream: !GetAtt Table.StreamArn
-            StartingPosition: TRIM_HORIZON
-            BatchSize: 1
-      Environment:
-        Variables:
-          TOPIC_NAME: !GetAtt Topic.TopicName
-          TOPIC_ARN: !Ref Topic
-          TABLE_NAME: !Ref Table
-          TABLE_ARN: !GetAtt Table.Arn
   QueryAPI:
     Type: AWS::Serverless::Function
     Properties:
