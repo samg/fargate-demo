@@ -28,8 +28,8 @@ Resources:
         - Stack ${StackTagName} Environment ${EnvironmentTagName} Process ${ResourceName}
         - ResourceName: QueryAPI
       CodeUri: src/QueryAPI
-      Handler: index.handler
-      Runtime: nodejs8.10
+      Handler: StackeryFunction::StackeryFunction.Handler::handler
+      Runtime: dotnetcore2.1
       MemorySize: 3008
       Timeout: 30
       Tracing: Active
